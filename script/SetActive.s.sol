@@ -11,7 +11,6 @@ import {Contribution} from "../src/Contribution.sol";
 import {DevOpsTools} from "../lib/foundry-devops/src/DevOpsTools.sol";
 
 contract SetActive is Script {
-    
     HelperConfig internal helperConfig;
     OrganizationManager internal organizationManager;
     EntityManager internal entityManager;

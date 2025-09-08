@@ -74,12 +74,8 @@ contract EntityManager is Ownable, ReentrancyGuard {
 
         uint256 entityId = s_nextTokenId++;
 
-        s_entities[entityId] = Entity({
-            id: entityId,
-            organization: msg.sender,
-            dataHash: entityHash,
-            metadata: metadata
-        });
+        s_entities[entityId] =
+            Entity({id: entityId, organization: msg.sender, dataHash: entityHash, metadata: metadata});
 
         s_entitiesByOrganization[msg.sender].push(entityId);
 
@@ -95,13 +91,24 @@ contract EntityManager is Ownable, ReentrancyGuard {
         if (!isRegisteredEntity(entityId)) {
             revert EntityManager__EntityNotRegistered();
         }
-        
+        Entity storage entity = s_entities[entityId];
         // Only the organization that registered the entity can update its metadata
-        if (s_entities[entityId].organization != msg.sender) {
+        if (entity.organization != msg.sender) {
             revert EntityManager__UnauthorizedUser();
         }
-        
-        s_entities[entityId].metadata = newMetadata;
+
+        entity.metadata = newMetadata;
+        try EntityToken(s_entityToken).getTokenIdByHash(entity.dataHash) returns (uint256 tokenId) {
+            if (tokenId > 0) {
+                EntityToken(s_entityToken).updateTokenURI(tokenId, newMetadata);
+            }
+        } catch Error(string memory) {
+            // This will catch the 'EntityToken__TokenIdNotFound' error and allow execution to continue.
+            // We can optionally log the reason: console.log(reason);
+        } catch (bytes memory) {
+            // Catch other low-level errors, if any.
+        }
+
         emit EntityMetadataUpdated(entityId, newMetadata);
     }
 
@@ -186,7 +193,7 @@ contract EntityManager is Ownable, ReentrancyGuard {
     function isRegisteredEntity(uint256 entityId) public view returns (bool) {
         return s_entities[entityId].organization != address(0);
     }
-    
+
     /**
      * @notice Checks if an organization is approved.
      * @param orgAddress The address of the organization.

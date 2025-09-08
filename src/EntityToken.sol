@@ -45,10 +45,7 @@ contract EntityToken is ERC721URIStorage, Ownable {
      * @dev Initializes the contract with the EntityManager address.
      * @param _entityManagerAddress Address of the deployed EntityManager contract.
      */
-    constructor(address _entityManagerAddress)
-        ERC721("Entity Asset", "EA")
-        Ownable(msg.sender)
-    {
+    constructor(address _entityManagerAddress) ERC721("Entity Asset", "EA") Ownable(msg.sender) {
         i_entityManager = _entityManagerAddress;
     }
 

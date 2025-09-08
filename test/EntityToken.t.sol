@@ -18,7 +18,8 @@ contract EntityTokenTest is TestBase {
         entityToken.safeMint(CONTRIBUTOR_ACCOUNT, DUMMY_HASH, Base64.encode(bytes(TOKEN_URI)));
 
         assertEq(entityToken.ownerOf(1), CONTRIBUTOR_ACCOUNT);
-        string memory expectedURI = string(abi.encodePacked("data:application/json;base64,", Base64.encode(bytes(TOKEN_URI))));
+        string memory expectedURI =
+            string(abi.encodePacked("data:application/json;base64,", Base64.encode(bytes(TOKEN_URI))));
         assertEq(entityToken.tokenURI(1), expectedURI);
     }
 

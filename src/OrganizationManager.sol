@@ -15,7 +15,11 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
     error OrganizationManager__OrganizationNotExists();
 
     // Enums
-    enum OrganizationStatus { PENDING, APPROVED, REJECTED }
+    enum OrganizationStatus {
+        PENDING,
+        APPROVED,
+        REJECTED
+    }
 
     // Structs
     struct Organization {
@@ -42,10 +46,7 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
             revert OrganizationManager__OrganizationAlreadyExists();
         }
 
-        organizations[msg.sender] = Organization({
-            name: name,
-            status: OrganizationStatus.PENDING
-        });
+        organizations[msg.sender] = Organization({name: name, status: OrganizationStatus.PENDING});
         organizationAddresses.push(msg.sender);
 
         emit OrganizationRegistered(msg.sender, name);

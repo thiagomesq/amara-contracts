@@ -16,9 +16,10 @@ contract OrganizationManagerTest is TestBase {
         vm.prank(ORG_ACCOUNT);
         organizationManager.registerOrganization(ORG_NAME);
 
-        (string memory name, OrganizationManager.OrganizationStatus status) = organizationManager.organizations(ORG_ACCOUNT);
+        (string memory name, OrganizationManager.OrganizationStatus status) =
+            organizationManager.organizations(ORG_ACCOUNT);
         assertEq(name, ORG_NAME);
-        assertEq(uint(status), uint(OrganizationManager.OrganizationStatus.PENDING));
+        assertEq(uint256(status), uint256(OrganizationManager.OrganizationStatus.PENDING));
     }
 
     function test_RevertIf_OrganizationAlreadyExists() public {
@@ -38,7 +39,7 @@ contract OrganizationManagerTest is TestBase {
         organizationManager.setOrganizationStatus(ORG_ACCOUNT, OrganizationManager.OrganizationStatus.APPROVED);
 
         (, OrganizationManager.OrganizationStatus status) = organizationManager.organizations(ORG_ACCOUNT);
-        assertEq(uint(status), uint(OrganizationManager.OrganizationStatus.APPROVED));
+        assertEq(uint256(status), uint256(OrganizationManager.OrganizationStatus.APPROVED));
     }
 
     function test_RevertIf_NonOwnerSetsStatus() public {

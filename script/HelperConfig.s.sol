@@ -36,21 +36,15 @@ contract HelperConfig is Script {
     }
 
     function getAmoyConfig() public pure returns (NetworkConfig memory) {
-        return NetworkConfig({
-            account: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F
-        });
+        return NetworkConfig({account: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F});
     }
 
     function getPolygonConfig() public pure returns (NetworkConfig memory) {
         // price feed address
-        return NetworkConfig({
-            account: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F
-        });
+        return NetworkConfig({account: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F});
     }
 
     function getOrCreateAnvilEthConfig() public pure returns (NetworkConfig memory) {
-        return NetworkConfig({
-            account: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-        });
+        return NetworkConfig({account: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266});
     }
 }

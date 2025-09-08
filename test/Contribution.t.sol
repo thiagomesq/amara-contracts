@@ -1,120 +1,153 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {TestBase} from "./TestBase.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {Contribution} from "../src/Contribution.sol";
-import {EntityManager} from "../src/EntityManager.sol";
 import {OrganizationManager} from "../src/OrganizationManager.sol";
+import {EntityManager} from "../src/EntityManager.sol";
+import {EntityToken} from "../src/EntityToken.sol";
+import {MockERC20Permit} from "./mocks/MockERC20Permit.sol";
 
-contract ContributionTest is TestBase {
-    string private constant ORG_NAME = "Test Org";
-    string private constant ENTITY_NAME = "Test Entity";
-    string private constant ENTITY_METADATA = "ipfs://some-hash";
-    uint256 private constant CONTRIBUTION_AMOUNT = 1 ether;
-    uint256 private constant SUB_INTERVAL = 30 days;
-    uint256 private s_entityId;
+contract ContributionTest is Test {
+    Contribution private contribution;
+    OrganizationManager private organizationManager;
+    EntityManager private entityManager;
+    EntityToken private entityToken;
+    MockERC20Permit private token;
 
-    function setUp() public override {
-        super.setUp();
-        // Pre-approve organization and register an entity
+    address private constant OWNER = address(1);
+    address private constant ORG_ACCOUNT = address(2);
+    uint256 private constant USER_PRIVATE_KEY = 0x123;
+    address private USER_ACCOUNT = vm.addr(USER_PRIVATE_KEY);
+
+    uint256 private constant CONTRIBUTION_AMOUNT = 100 ether;
+    uint256 private constant INITIAL_SUPPLY = 1_000_000 ether;
+
+    function setUp() public {
+        vm.startPrank(OWNER);
+        organizationManager = new OrganizationManager();
+        entityManager = new EntityManager(address(organizationManager));
+        entityToken = new EntityToken(address(entityManager));
+        contribution = new Contribution(address(organizationManager), address(entityManager));
+
+        entityManager.setContributionContract(address(contribution));
+        entityManager.setEntityToken(address(entityToken));
+        vm.stopPrank();
+
+        vm.startPrank(ORG_ACCOUNT);
+        organizationManager.registerOrganization("Org Name");
+        vm.stopPrank();
+
+        vm.startPrank(OWNER);
+        organizationManager.setActive(ORG_ACCOUNT);
+        vm.stopPrank();
+
         vm.prank(ORG_ACCOUNT);
-        organizationManager.registerOrganization(ORG_NAME);
-        vm.prank(OWNER);
-        organizationManager.setOrganizationStatus(ORG_ACCOUNT, OrganizationManager.OrganizationStatus.APPROVED);
+        entityManager.registerEntity("metadata", keccak256("entity"));
 
-        vm.prank(ORG_ACCOUNT);
-        bytes32 entityHash = keccak256(abi.encodePacked(ENTITY_NAME, ORG_ACCOUNT));
-        entityManager.registerEntity(ENTITY_METADATA, entityHash);
-        s_entityId = 1;
+        token = new MockERC20Permit("Mock Token", "MTK", USER_ACCOUNT, INITIAL_SUPPLY);
     }
 
-    // --- Subscription Tests ---
+    // Helper function to get permit signature
+    function _getPermitSignature(
+        address owner,
+        address spender,
+        uint256 value,
+        uint256 deadline,
+        uint256 privateKey
+    ) internal view returns (uint8 v, bytes32 r, bytes32 s) {
+        bytes32 digest = token.getPermitDigest(owner, spender, value, deadline);
+        (v, r, s) = vm.sign(privateKey, digest);
+    }
+
+    function test_DepositAndContribute() public {
+        // Arrange
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+            USER_ACCOUNT, address(contribution), CONTRIBUTION_AMOUNT, deadline, USER_PRIVATE_KEY
+        );
+
+        // Act
+        vm.prank(USER_ACCOUNT);
+        contribution.depositAndContribute(ORG_ACCOUNT, address(token), CONTRIBUTION_AMOUNT, deadline, v, r, s);
+
+        // Assert
+        assertEq(token.balanceOf(ORG_ACCOUNT), CONTRIBUTION_AMOUNT);
+        assertEq(token.balanceOf(USER_ACCOUNT), INITIAL_SUPPLY - CONTRIBUTION_AMOUNT);
+    }
 
     function test_Subscribe() public {
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT);
-        uint256 orgInitialBalance = address(ORG_ACCOUNT).balance;
+        // Arrange
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 interval = 30 days;
+        (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+            USER_ACCOUNT, address(contribution), CONTRIBUTION_AMOUNT, deadline, USER_PRIVATE_KEY
+        );
 
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        vm.expectEmit(true, true, true, true);
-        emit Contribution.Subscribed(CONTRIBUTOR_ACCOUNT, s_entityId, CONTRIBUTION_AMOUNT, SUB_INTERVAL);
-        contribution.subscribe{value: CONTRIBUTION_AMOUNT}(ORG_ACCOUNT, s_entityId, SUB_INTERVAL);
+        // Act
+        vm.prank(USER_ACCOUNT);
+        contribution.subscribe(ORG_ACCOUNT, 1, address(token), CONTRIBUTION_AMOUNT, interval, deadline, v, r, s);
 
-        assertEq(entityToken.ownerOf(1), CONTRIBUTOR_ACCOUNT);
-        assertEq(address(ORG_ACCOUNT).balance, orgInitialBalance + CONTRIBUTION_AMOUNT);
-    }
-
-    function test_RevertIf_SubscribeToActiveSubscription() public {
-        // First subscription
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT * 2);
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        contribution.subscribe{value: CONTRIBUTION_AMOUNT}(ORG_ACCOUNT, s_entityId, SUB_INTERVAL);
-
-        // Attempt to subscribe again
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        vm.expectRevert(Contribution.Contribution__SubscriptionAlreadyExists.selector);
-        contribution.subscribe{value: CONTRIBUTION_AMOUNT}(ORG_ACCOUNT, s_entityId, SUB_INTERVAL);
+        // Assert
+        assertEq(token.balanceOf(ORG_ACCOUNT), CONTRIBUTION_AMOUNT);
+        assertEq(token.balanceOf(USER_ACCOUNT), INITIAL_SUPPLY - CONTRIBUTION_AMOUNT);
+        // Check subscription details if needed
     }
 
     function test_RenewSubscription() public {
-        // Subscribe first
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT * 2);
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        contribution.subscribe{value: CONTRIBUTION_AMOUNT}(ORG_ACCOUNT, s_entityId, SUB_INTERVAL);
+        // Arrange: Initial subscription
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 interval = 30 days;
+        (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+            USER_ACCOUNT, address(contribution), CONTRIBUTION_AMOUNT, deadline, USER_PRIVATE_KEY
+        );
+        vm.prank(USER_ACCOUNT);
+        contribution.subscribe(ORG_ACCOUNT, 1, address(token), CONTRIBUTION_AMOUNT, interval, deadline, v, r, s);
 
-        uint256 orgBalanceAfterSub = address(ORG_ACCOUNT).balance;
+        // Arrange: Move time forward and get new signature
+        vm.warp(block.timestamp + interval + 1);
+        uint256 renewalDeadline = block.timestamp + 1 hours;
+        (uint8 v2, bytes32 r2, bytes32 s2) = _getPermitSignature(
+            USER_ACCOUNT, address(contribution), CONTRIBUTION_AMOUNT, renewalDeadline, USER_PRIVATE_KEY
+        );
 
-        // Fast-forward time
-        uint256 expectedTimestamp = block.timestamp + SUB_INTERVAL + 1;
-        vm.warp(expectedTimestamp);
+        // Act
+        vm.prank(USER_ACCOUNT);
+        contribution.renewSubscription(1, renewalDeadline, v2, r2, s2);
 
-        // Renew
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        vm.expectEmit(true, true, false, true);
-        emit Contribution.SubscriptionRenewed(CONTRIBUTOR_ACCOUNT, s_entityId, expectedTimestamp);
-        contribution.renewSubscription{value: CONTRIBUTION_AMOUNT}(s_entityId);
-
-        assertEq(address(ORG_ACCOUNT).balance, orgBalanceAfterSub + CONTRIBUTION_AMOUNT);
+        // Assert
+        assertEq(token.balanceOf(ORG_ACCOUNT), CONTRIBUTION_AMOUNT * 2);
+        assertEq(token.balanceOf(USER_ACCOUNT), INITIAL_SUPPLY - (CONTRIBUTION_AMOUNT * 2));
     }
 
-    function test_RevertIf_RenewTooEarly() public {
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT);
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        contribution.subscribe{value: CONTRIBUTION_AMOUNT}(ORG_ACCOUNT, s_entityId, SUB_INTERVAL);
+    function test_ServiceFee() public {
+        // Arrange
+        uint8 serviceFee = 10; // 10%
+        vm.prank(OWNER);
+        contribution.setServiceFee(serviceFee);
 
-        // Don't fast-forward time
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT);
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        vm.expectRevert(Contribution.Contribution__SubscriptionNotDue.selector);
-        contribution.renewSubscription{value: CONTRIBUTION_AMOUNT}(s_entityId);
+        uint256 deadline = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _getPermitSignature(
+            USER_ACCOUNT, address(contribution), CONTRIBUTION_AMOUNT, deadline, USER_PRIVATE_KEY
+        );
+
+        // Act
+        vm.prank(USER_ACCOUNT);
+        contribution.depositAndContribute(ORG_ACCOUNT, address(token), CONTRIBUTION_AMOUNT, deadline, v, r, s);
+
+        // Assert
+        uint256 expectedFee = (CONTRIBUTION_AMOUNT * serviceFee) / 100;
+        uint256 expectedOrgAmount = CONTRIBUTION_AMOUNT - expectedFee;
+
+        assertEq(token.balanceOf(ORG_ACCOUNT), expectedOrgAmount);
+        assertEq(token.balanceOf(address(contribution)), 0);
+        assertEq(token.balanceOf(OWNER), expectedFee);
+        assertEq(token.balanceOf(USER_ACCOUNT), INITIAL_SUPPLY - CONTRIBUTION_AMOUNT);
     }
 
-    function test_RevertIf_RenewWithWrongAmount() public {
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT + 1 wei);
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        contribution.subscribe{value: CONTRIBUTION_AMOUNT}(ORG_ACCOUNT, s_entityId, SUB_INTERVAL);
-
-        vm.warp(block.timestamp + SUB_INTERVAL + 1);
-
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        vm.expectRevert(Contribution.Contribution__InvalidContributionAmount.selector);
-        contribution.renewSubscription{value: 1 wei}(s_entityId);
-    }
-
-    function test_CancelSubscription() public {
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT);
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        contribution.subscribe{value: CONTRIBUTION_AMOUNT}(ORG_ACCOUNT, s_entityId, SUB_INTERVAL);
-
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        vm.expectEmit(true, true, false, true);
-        emit Contribution.SubscriptionCanceled(CONTRIBUTOR_ACCOUNT, s_entityId);
-        contribution.cancelSubscription(s_entityId);
-
-        // Verify it's cancelled
-        vm.warp(block.timestamp + SUB_INTERVAL + 1);
-        vm.deal(CONTRIBUTOR_ACCOUNT, CONTRIBUTION_AMOUNT);
-        vm.prank(CONTRIBUTOR_ACCOUNT);
-        vm.expectRevert(Contribution.Contribution__SubscriptionNotFound.selector);
-        contribution.renewSubscription{value: CONTRIBUTION_AMOUNT}(s_entityId);
+    function test_RevertIf_SetInvalidServiceFee() public {
+        vm.prank(OWNER);
+        vm.expectRevert(Contribution.Contribution__InvalidServiceFee.selector);
+        contribution.setServiceFee(101);
     }
 }

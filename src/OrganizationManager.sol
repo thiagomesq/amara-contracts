@@ -28,8 +28,8 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
     }
 
     // State Variables
-    mapping(address => Organization) public organizations;
-    address[] public organizationAddresses;
+    mapping(address => Organization) private s_organizations;
+    address[] private s_organizationAddresses;
 
     // Events
     event OrganizationRegistered(address indexed orgAddress, string name);
@@ -42,12 +42,12 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
      * @param name The name of the organization.
      */
     function registerOrganization(string calldata name) external nonReentrant {
-        if (bytes(organizations[msg.sender].name).length != 0) {
+        if (bytes(s_organizations[msg.sender].name).length != 0) {
             revert OrganizationManager__OrganizationAlreadyExists();
         }
 
-        organizations[msg.sender] = Organization({name: name, status: OrganizationStatus.PENDING});
-        organizationAddresses.push(msg.sender);
+        s_organizations[msg.sender] = Organization({name: name, status: OrganizationStatus.PENDING});
+        s_organizationAddresses.push(msg.sender);
 
         emit OrganizationRegistered(msg.sender, name);
     }
@@ -66,11 +66,11 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
      * @param status The new status for the organization.
      */
     function setOrganizationStatus(address orgAddress, OrganizationStatus status) public onlyOwner {
-        if (bytes(organizations[orgAddress].name).length == 0) {
+        if (bytes(s_organizations[orgAddress].name).length == 0) {
             revert OrganizationManager__OrganizationNotExists();
         }
 
-        organizations[orgAddress].status = status;
+        s_organizations[orgAddress].status = status;
         emit OrganizationStatusChanged(orgAddress, status);
     }
 
@@ -80,7 +80,7 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
      * @return True if the organization is approved, false otherwise.
      */
     function isApprovedOrganization(address orgAddress) external view returns (bool) {
-        return organizations[orgAddress].status == OrganizationStatus.APPROVED;
+        return s_organizations[orgAddress].status == OrganizationStatus.APPROVED;
     }
 
     /**
@@ -89,10 +89,10 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
      * @return The Organization struct.
      */
     function getOrganization(address orgAddress) external view returns (Organization memory) {
-        if (bytes(organizations[orgAddress].name).length == 0) {
+        if (bytes(s_organizations[orgAddress].name).length == 0) {
             revert OrganizationManager__OrganizationNotExists();
         }
-        return organizations[orgAddress];
+        return s_organizations[orgAddress];
     }
 
     /**
@@ -100,10 +100,10 @@ contract OrganizationManager is Ownable, ReentrancyGuard {
      * @return The total count of organizations.
      */
     function getOrganizationCount() external view returns (uint256) {
-        return organizationAddresses.length;
+        return s_organizationAddresses.length;
     }
 
     function getOrganizations() external view returns (address[] memory) {
-        return organizationAddresses;
+        return s_organizationAddresses;
     }
 }

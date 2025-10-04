@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.19;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IRegistry} from "./interfaces/IRegistry.sol";
 import {OrganizationManager} from "./OrganizationManager.sol";
 import {EntityManager} from "./EntityManager.sol";
 
@@ -14,7 +16,8 @@ import {EntityManager} from "./EntityManager.sol";
  * @author Thiago Mesquita
  * @notice Handles contributions to organizations for sponsoring entities.
  */
-contract Contribution is Ownable, ReentrancyGuard {
+// aderyn-fp-next-line(contract-locks-ether)
+contract Contribution is AccessControlUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
     // Custom Errors
@@ -26,6 +29,7 @@ contract Contribution is Ownable, ReentrancyGuard {
     error Contribution__SubscriptionNotFound();
     error Contribution__SubscriptionNotDue();
     error Contribution__InvalidServiceFee();
+    error Contribution__ZeroAddressNotAllowed();
 
     // Structs
     struct Subscription {
@@ -41,8 +45,7 @@ contract Contribution is Ownable, ReentrancyGuard {
 
     // State Variables
     uint8 private constant MAX_SERVICE_FEE = 100;
-    OrganizationManager private immutable i_organizationManager;
-    EntityManager private immutable i_entityManager;
+    address private s_registry;
     uint8 private s_serviceFee = 0;
 
     // Mappings
@@ -65,22 +68,35 @@ contract Contribution is Ownable, ReentrancyGuard {
     }
 
     modifier onlyRegisteredEntity(uint256 entityId) {
-        if (!i_entityManager.isRegisteredEntity(entityId)) {
+        address entityManagerAddress = _getEntityManagerAddress();
+        if (!EntityManager(payable(entityManagerAddress)).isRegisteredEntity(entityId)) {
             revert Contribution__EntityNotRegistered();
         }
         _;
     }
 
-    /**
-     * @param orgManagerAddress The address of the OrganizationManager contract.
-     * @param entityManagerAddress The address of the EntityManager contract.
-     */
-    constructor(address orgManagerAddress, address entityManagerAddress) Ownable(msg.sender) {
-        i_organizationManager = OrganizationManager(orgManagerAddress);
-        i_entityManager = EntityManager(entityManagerAddress);
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
 
-    function setServiceFee(uint8 serviceFee) external onlyOwner {
+    receive() external payable {
+        revert();
+    }
+
+    function initialize(address registryAddress, address admin) external initializer {
+        if (admin == address(0) || registryAddress == address(0)) {
+            revert Contribution__ZeroAddressNotAllowed();
+        }
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        s_registry = registryAddress;
+    }
+
+    function setServiceFee(uint8 serviceFee) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (serviceFee == s_serviceFee) return;
         if (serviceFee > MAX_SERVICE_FEE) revert Contribution__InvalidServiceFee();
         s_serviceFee = serviceFee;
@@ -91,10 +107,10 @@ contract Contribution is Ownable, ReentrancyGuard {
         return s_serviceFee;
     }
 
-    function withdrawFees(address token) external onlyOwner {
+    function withdrawFees(address token) external onlyRole(DEFAULT_ADMIN_ROLE) {
         uint256 balance = IERC20(token).balanceOf(address(this));
         if (balance > 0) {
-            IERC20(token).safeTransfer(owner(), balance);
+            IERC20(token).safeTransfer(_msgSender(), balance);
         }
     }
 
@@ -123,7 +139,8 @@ contract Contribution is Ownable, ReentrancyGuard {
         if (orgAddress == address(0)) {
             revert Contribution__InvalidOrganization();
         }
-        if (!i_organizationManager.isApprovedOrganization(orgAddress)) {
+        address orgManagerAddress = _getOrgManagerAddress();
+        if (!OrganizationManager(payable(orgManagerAddress)).isApprovedOrganization(orgAddress)) {
             revert Contribution__NotAnApprovedOrganization();
         }
 
@@ -173,7 +190,8 @@ contract Contribution is Ownable, ReentrancyGuard {
 
         _permitAndTransfer(token, msg.sender, address(this), amount, deadline, v, r, s);
 
-        i_entityManager.mintEntityToken(msg.sender, entityId);
+        address entityManagerAddress = _getEntityManagerAddress();
+        EntityManager(payable(entityManagerAddress)).mintEntityToken(msg.sender, entityId);
 
         _transferToOrg(orgAddress, token, amount);
 
@@ -188,6 +206,7 @@ contract Contribution is Ownable, ReentrancyGuard {
      * @param r The r value of the signature.
      * @param s The s value of the signature.
      */
+    // aderyn-ignore-next-line(eth-send-unchecked-address)
     function renewSubscription(uint256 entityId, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
         external
         nonReentrant
@@ -238,10 +257,12 @@ contract Contribution is Ownable, ReentrancyGuard {
         if (orgAddress == address(0)) {
             revert Contribution__InvalidOrganization();
         }
-        if (!i_organizationManager.isApprovedOrganization(orgAddress)) {
+        address orgManagerAddress = _getOrgManagerAddress();
+        if (!OrganizationManager(payable(orgManagerAddress)).isApprovedOrganization(orgAddress)) {
             revert Contribution__NotAnApprovedOrganization();
         }
-        if (!i_entityManager.isRegisteredEntity(entityId)) {
+        address entityManagerAddress = _getEntityManagerAddress();
+        if (!EntityManager(payable(entityManagerAddress)).isRegisteredEntity(entityId)) {
             revert Contribution__EntityNotRegistered();
         }
     }
@@ -255,32 +276,9 @@ contract Contribution is Ownable, ReentrancyGuard {
     function _transferToOrg(address orgAddress, address token, uint256 amount) private {
         uint256 serviceFeeAmount = (amount * s_serviceFee) / 100;
         if (serviceFeeAmount > 0) {
-            IERC20(token).safeTransfer(owner(), serviceFeeAmount);
+            IERC20(token).safeTransfer(address(this), serviceFeeAmount);
         }
         IERC20(token).safeTransfer(orgAddress, amount - serviceFeeAmount);
-    }
-
-    /**
-     * @notice Internal contribution logic.
-     * @param orgAddress The address of the organization.
-     * @param token The address of the ERC20 token.
-     * @param amount The amount of tokens to contribute.
-     */
-    function _contribute(address orgAddress, address token, uint256 amount)
-        internal
-        nonReentrant
-        onlyEnoughAmount(amount)
-    {
-        if (orgAddress == address(0)) {
-            revert Contribution__InvalidOrganization();
-        }
-        if (!i_organizationManager.isApprovedOrganization(orgAddress)) {
-            revert Contribution__NotAnApprovedOrganization();
-        }
-
-        _transferToOrg(orgAddress, token, amount);
-
-        emit Contributed(msg.sender, orgAddress, token, amount);
     }
 
     /**
@@ -298,5 +296,19 @@ contract Contribution is Ownable, ReentrancyGuard {
     ) internal {
         IERC20Permit(token).permit(owner, spender, value, deadline, v, r, s);
         IERC20(token).safeTransferFrom(owner, address(this), value);
+    }
+
+    function _getOrgManagerAddress() internal view returns (address) {
+        return IRegistry(s_registry).getAddress(keccak256("ORGANIZATION_MANAGER"));
+    }
+
+    function _getEntityManagerAddress() internal view returns (address) {
+        return IRegistry(s_registry).getAddress(keccak256("ENTITY_MANAGER"));
+    }
+
+    function _authorizeUpgrade(address newImplementation) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newImplementation == address(0)) {
+            revert Contribution__ZeroAddressNotAllowed();
+        }
     }
 }

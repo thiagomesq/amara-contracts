@@ -1,115 +1,178 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.19;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IRegistry} from "./interfaces/IRegistry.sol";
 import {OrganizationManager} from "./OrganizationManager.sol";
 import {EntityToken} from "./EntityToken.sol";
+import {Structs} from "./libraries/Structs.sol";
 
 /**
  * @title EntityManager
  * @author Thiago Mesquita
  * @notice Manages the registration of entities by approved organizations.
  */
-contract EntityManager is Ownable, ReentrancyGuard {
+// aderyn-fp-next-line(contract-locks-ether)
+contract EntityManager is AccessControlUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
     // Custom Errors
     error EntityManager__EntityNotRegistered();
     error EntityManager__UnauthorizedUser();
     error EntityManager__OrganizationNotApproved();
-    error EntityManager__InvalidOrganizationManager();
-    error EntityManager__InvalidEntityToken();
+    error EntityManager__EntityAlreadyExists();
+    error EntityManager__ZeroAddressNotAllowed();
 
     // Structs
+    using Structs for Structs.Metadata;
+
     struct Entity {
         uint256 id;
         address organization;
         bytes32 dataHash;
-        string metadata;
+        string name;
+        string description;
+        string image;
+        Structs.Attribute[] attributes;
     }
 
     // State Variables
-    address private immutable i_organizationManager;
-    address private s_contributionContract;
-    address private s_entityToken;
+    address private s_registry;
     mapping(uint256 => Entity) private s_entities;
     mapping(address => uint256[]) private s_entitiesByOrganization;
+    mapping(bytes32 => uint256) private s_entityIdsByHash;
     uint256 private s_nextTokenId = 1;
 
     // Events
-    event EntityRegistered(uint256 indexed entityId, address indexed orgAddress, bytes32 dataHash);
-    event EntityMetadataUpdated(uint256 indexed entityId, string metadata);
-    event ContributionContractSet(address indexed contributionContract);
-    event EntityTokenSet(address indexed entityToken);
+    event EntityRegistered(
+        uint256 indexed entityId,
+        address indexed orgAddress,
+        bytes32 dataHash,
+        string name,
+        string description,
+        string image
+    );
+    event EntityMetadataUpdated(uint256 indexed entityId, string name, string description, string image);
 
     /**
      * @notice Modifier to ensure a function is called only by the Contribution contract.
      */
     modifier onlyContributionContract() {
-        if (msg.sender != s_contributionContract) {
+        if (msg.sender != _getContributionContractAddress()) {
             revert EntityManager__UnauthorizedUser();
         }
         _;
     }
 
-    /**
-     * @param orgManagerAddress The address of the OrganizationManager contract.
-     */
-    constructor(address orgManagerAddress) Ownable(msg.sender) {
-        if (orgManagerAddress == address(0)) {
-            revert EntityManager__InvalidOrganizationManager();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    receive() external payable {
+        revert();
+    }
+
+    function initialize(address registryAddress, address admin) external initializer {
+        if (admin == address(0) || registryAddress == address(0)) {
+            revert EntityManager__ZeroAddressNotAllowed();
         }
-        i_organizationManager = orgManagerAddress;
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        s_registry = registryAddress;
     }
 
     /**
      * @notice Allows an approved organization to register a new entity.
-     * @param metadata The metadata of the entity.
      * @param entityHash The hash of the entity data.
+     * @param name The name of the entity.
+     * @param description The description of the entity.
+     * @param image The image of the entity.
+     * @param attributes The attributes of the entity.
      */
-    function registerEntity(string calldata metadata, bytes32 entityHash) external nonReentrant {
-        if (!_isApprovedOrganization(msg.sender)) {
+    function registerEntity(
+        bytes32 entityHash,
+        string calldata name,
+        string calldata description,
+        string calldata image,
+        Structs.Attribute[] calldata attributes
+    ) external nonReentrant {
+        address orgManagerAddress = _getOrgManagerAddress();
+        // aderyn-fp-next-line(reentrancy-state-change)
+        if (!OrganizationManager(payable(orgManagerAddress)).isApprovedOrganization(msg.sender)) {
             revert EntityManager__OrganizationNotApproved();
         }
 
-        uint256 entityId = s_nextTokenId++;
+        if (s_entityIdsByHash[entityHash] != 0) {
+            revert EntityManager__EntityAlreadyExists();
+        }
 
-        s_entities[entityId] =
-            Entity({id: entityId, organization: msg.sender, dataHash: entityHash, metadata: metadata});
+        uint256 entityId = s_nextTokenId++;
+        s_entityIdsByHash[entityHash] = entityId;
+
+        Entity storage newEntity = s_entities[entityId];
+        newEntity.id = entityId;
+        newEntity.organization = msg.sender;
+        newEntity.dataHash = entityHash;
+        newEntity.name = name;
+        newEntity.description = description;
+        newEntity.image = image;
+        for (uint256 i = 0; i < attributes.length; i++) {
+            newEntity.attributes.push(attributes[i]);
+        }
 
         s_entitiesByOrganization[msg.sender].push(entityId);
 
-        emit EntityRegistered(entityId, msg.sender, entityHash);
+        emit EntityRegistered(entityId, msg.sender, entityHash, name, description, image);
     }
 
     /**
      * @notice Updates the metadata of a registered entity.
      * @param entityId The ID of the entity.
-     * @param newMetadata The new metadata for the entity.
+     * @param name The name of the entity.
+     * @param description The description of the entity.
+     * @param image The image of the entity.
+     * @param attributes The attributes of the entity.
      */
-    function updateEntityMetadata(uint256 entityId, string calldata newMetadata) external nonReentrant {
+    function updateEntityMetadata(
+        uint256 entityId,
+        string calldata name,
+        string calldata description,
+        string calldata image,
+        Structs.Attribute[] calldata attributes
+    ) external nonReentrant {
         if (!isRegisteredEntity(entityId)) {
             revert EntityManager__EntityNotRegistered();
         }
         Entity storage entity = s_entities[entityId];
-        // Only the organization that registered the entity can update its metadata
         if (entity.organization != msg.sender) {
             revert EntityManager__UnauthorizedUser();
         }
 
-        entity.metadata = newMetadata;
-        try EntityToken(s_entityToken).getTokenIdByHash(entity.dataHash) returns (uint256 tokenId) {
-            if (tokenId > 0) {
-                EntityToken(s_entityToken).updateTokenURI(tokenId, newMetadata);
-            }
-        } catch Error(string memory) {
-            // This will catch the 'EntityToken__TokenIdNotFound' error and allow execution to continue.
-            // We can optionally log the reason: console.log(reason);
-        } catch (bytes memory) {
-            // Catch other low-level errors, if any.
+        entity.name = name;
+        entity.description = description;
+        entity.image = image;
+        delete entity.attributes;
+        for (uint256 i = 0; i < attributes.length; i++) {
+            entity.attributes.push(attributes[i]);
         }
 
-        emit EntityMetadataUpdated(entityId, newMetadata);
+        address entityTokenAddress = _getEntityTokenAddress();
+        try EntityToken(payable(entityTokenAddress)).getTokenIdByHash(entity.dataHash) returns (uint256 tokenId) {
+            if (tokenId > 0) {
+                EntityToken(payable(entityTokenAddress)).updateTokenURI(tokenId, name, description, image, attributes);
+            }
+        } catch Error(string memory) {
+            // Ignora o erro se o token não for encontrado
+        } catch (bytes memory) {
+            // Ignora outros erros
+        }
+
+        emit EntityMetadataUpdated(entityId, name, description, image);
     }
 
     /**
@@ -123,36 +186,12 @@ contract EntityManager is Ownable, ReentrancyGuard {
             revert EntityManager__EntityNotRegistered();
         }
 
-        bytes32 entityHash = getEntityHash(entityId);
-        string memory metadata = getEntityMetadata(entityId);
+        Entity storage entity = s_entities[entityId];
 
-        EntityToken(s_entityToken).safeMint(contributor, entityHash, metadata);
-    }
-
-    /**
-     * @notice Allows the owner to set the address of the Contribution contract.
-     * @param _contributionAddress The address of the Contribution contract.
-     */
-    function setContributionContract(address _contributionAddress) external onlyOwner {
-        if (_contributionAddress == s_contributionContract) return;
-        s_contributionContract = _contributionAddress;
-        emit ContributionContractSet(_contributionAddress);
-    }
-
-    /**
-     * @notice Allows the owner to set the address of the EntityToken contract.
-     * @dev Can only be set once.
-     * @param _entityTokenAddress The address of the EntityToken contract.
-     */
-    function setEntityToken(address _entityTokenAddress) external onlyOwner {
-        if (_entityTokenAddress == address(0)) {
-            revert EntityManager__InvalidEntityToken();
-        }
-        if (s_entityToken != address(0)) {
-            revert EntityManager__UnauthorizedUser(); // Or a more specific error
-        }
-        s_entityToken = _entityTokenAddress;
-        emit EntityTokenSet(_entityTokenAddress);
+        address entityTokenAddress = _getEntityTokenAddress();
+        EntityToken(payable(entityTokenAddress)).safeMint(
+            contributor, entity.dataHash, entity.name, entity.description, entity.image, entity.attributes
+        );
     }
 
     /**
@@ -160,7 +199,7 @@ contract EntityManager is Ownable, ReentrancyGuard {
      * @param entityId The ID of the entity.
      * @return The hash of the entity.
      */
-    function getEntityHash(uint256 entityId) public view returns (bytes32) {
+    function getEntityHash(uint256 entityId) external view returns (bytes32) {
         if (!isRegisteredEntity(entityId)) {
             revert EntityManager__EntityNotRegistered();
         }
@@ -172,8 +211,13 @@ contract EntityManager is Ownable, ReentrancyGuard {
      * @param entityId The ID of the entity.
      * @return The metadata of the entity.
      */
-    function getEntityMetadata(uint256 entityId) public view returns (string memory) {
-        return s_entities[entityId].metadata;
+    function getEntityMetadata(uint256 entityId) external view returns (Structs.Metadata memory) {
+        Entity storage entity = s_entities[entityId];
+        Structs.Attribute[] memory attributes = new Structs.Attribute[](entity.attributes.length);
+        for (uint256 i = 0; i < entity.attributes.length; i++) {
+            attributes[i] = entity.attributes[i];
+        }
+        return Structs.Metadata(entity.name, entity.description, entity.image, attributes);
     }
 
     /**
@@ -191,15 +235,33 @@ contract EntityManager is Ownable, ReentrancyGuard {
      * @return True if the entity is registered, false otherwise.
      */
     function isRegisteredEntity(uint256 entityId) public view returns (bool) {
-        return s_entities[entityId].organization != address(0);
+        return s_entities[entityId].id != 0;
     }
 
     /**
-     * @notice Checks if an organization is approved.
-     * @param orgAddress The address of the organization.
-     * @return True if the organization is approved, false otherwise.
+     * @dev Retrieves the OrganizationManager contract address from the registry.
      */
-    function _isApprovedOrganization(address orgAddress) internal view returns (bool) {
-        return OrganizationManager(i_organizationManager).isApprovedOrganization(orgAddress);
+    function _getOrgManagerAddress() internal view returns (address) {
+        return IRegistry(s_registry).getAddress(keccak256("ORGANIZATION_MANAGER"));
+    }
+
+    /**
+     * @dev Retrieves the EntityToken contract address from the registry.
+     */
+    function _getEntityTokenAddress() internal view returns (address) {
+        return IRegistry(s_registry).getAddress(keccak256("ENTITY_TOKEN"));
+    }
+
+    /**
+     * @dev Retrieves the Contribution contract address from the registry.
+     */
+    function _getContributionContractAddress() internal view returns (address) {
+        return IRegistry(s_registry).getAddress(keccak256("CONTRIBUTION"));
+    }
+
+    function _authorizeUpgrade(address newImplementation) internal view override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newImplementation == address(0)) {
+            revert EntityManager__ZeroAddressNotAllowed();
+        }
     }
 }

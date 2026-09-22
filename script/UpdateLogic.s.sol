@@ -21,7 +21,7 @@ contract UpdateLogic is Script {
 
         vm.startBroadcast(config.admin);
 
-        Registry registry = Registry(DevOpsTools.get_most_recent_deployment("Registry", block.chainid));
+        Registry registry = Registry(DevOpsTools.get_most_recent_deployment("Registry", block.chainid, config.broadcastPath));
 
         OrganizationManager(payable(registry.getAddress(ORGANIZATION_MANAGER_ID))).upgradeTo(
             address(new OrganizationManager())

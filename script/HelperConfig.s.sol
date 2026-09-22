@@ -10,6 +10,7 @@ contract HelperConfig is Script {
     struct NetworkConfig {
         address account;
         address admin;
+        string broadcastPath;
     }
 
     uint256 constant LOCAL_CHAIN_ID = 31337;
@@ -38,22 +39,25 @@ contract HelperConfig is Script {
 
     function getLineaSepoliaConfig() public pure returns (NetworkConfig memory) {
         return NetworkConfig({
-            account: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F,
-            admin: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F
+            account: 0x680488a9b679C04C48966c9E42E44769F4aaa2fc,
+            admin: 0x680488a9b679C04C48966c9E42E44769F4aaa2fc,
+            broadcastPath: "./broadcast/DeployLogic.s.sol/59141/run-latest.json"
         });
     }
 
     function getLineaMainnetConfig() public pure returns (NetworkConfig memory) {
         return NetworkConfig({
-            account: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F,
-            admin: 0xe7FDf6cA472c484FA8b7b2E11a5E62adaF1e649F
+            account: 0x680488a9b679C04C48966c9E42E44769F4aaa2fc,
+            admin: 0x680488a9b679C04C48966c9E42E44769F4aaa2fc,
+            broadcastPath: "./broadcast/DeployLogic.s.sol/59144/run-latest.json"
         });
     }
 
     function getOrCreateAnvilEthConfig() public pure returns (NetworkConfig memory) {
         return NetworkConfig({
             account: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266,
-            admin: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+            admin: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266,
+            broadcastPath: "./broadcast/DeployLogic.s.sol/31337/run-latest.json"
         });
     }
 }

@@ -16,7 +16,7 @@ contract GrantRoles is Script {
 
         vm.startBroadcast(config.admin);
 
-        Registry registry = Registry(DevOpsTools.get_most_recent_deployment("Registry", block.chainid));
+        Registry registry = Registry(DevOpsTools.get_most_recent_deployment("Registry", block.chainid, config.broadcastPath));
 
         address entityManagerAddress = registry.getAddress(ENTITY_MANAGER_ID);
         address entityTokenAddress = registry.getAddress(ENTITY_TOKEN_ID);

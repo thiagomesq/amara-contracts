@@ -38,9 +38,9 @@ anvil :; anvil -m 'test test test test test test test test test test test junk' 
 NETWORK_ARGS := --rpc-url http://localhost:8545 --private-key $(DEFAULT_ANVIL_KEY) --broadcast -vvvvv
 
 ifeq ($(findstring --network sepolia,$(ARGS)),--network sepolia)
-	NETWORK_ARGS := --rpc-url sepolia --account $(ACCOUNT) --broadcast --verify --verifier etherscan --etherscan-api-key $(ETHERSCAN_API_KEY)
+	NETWORK_ARGS := --rpc-url sepolia --account $(ACCOUNT) --broadcast --verify --verifier etherscan --etherscan-api-key $(ETHERSCAN_API_KEY) --optimize --optimizer-runs 10000000
 else ifeq ($(findstring --network mainnet,$(ARGS)),--network mainnet)
-	NETWORK_ARGS := --rpc-url mainnet --account $(ACCOUNT) --broadcast --verify --verifier etherscan --etherscan-api-key $(ETHERSCAN_API_KEY)
+	NETWORK_ARGS := --rpc-url mainnet --account $(ACCOUNT) --broadcast --verify --verifier etherscan --etherscan-api-key $(ETHERSCAN_API_KEY) --optimize --optimizer-runs 10000000
 endif 
 
 deploy-logic: ## Deploy the logic contracts

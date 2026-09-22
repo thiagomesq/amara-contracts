@@ -21,6 +21,7 @@ contract DeployProxy is Script {
     bytes32 public constant ENTITY_MANAGER_ID = keccak256("ENTITY_MANAGER");
     bytes32 public constant ENTITY_TOKEN_ID = keccak256("ENTITY_TOKEN");
     bytes32 public constant CONTRIBUTION_ID = keccak256("CONTRIBUTION");
+    string public constant RELATIVE_BROADCAST_PATH = "./broadcast/DeployLogic.s.sol";
 
     function run()
         public
@@ -35,22 +36,24 @@ contract DeployProxy is Script {
 
         vm.startBroadcast(config.account);
 
+        Registry registry = Registry(DevOpsTools.get_most_recent_deployment("Registry", block.chainid, config.broadcastPath));
+        
         // 3. Deploy Proxies
+        bytes memory orgManagerInitData = abi.encodeCall(OrganizationManager.initialize, (config.admin));
         orgManagerProxyAddress =
-            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("OrganizationManager", block.chainid), ""));
+            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("OrganizationManager", block.chainid, config.broadcastPath), orgManagerInitData));
+        
+        bytes memory entityManagerInitData = abi.encodeCall(EntityManager.initialize, (address(registry), config.admin));
         entityManagerProxyAddress =
-            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("EntityManager", block.chainid), ""));
+            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("EntityManager", block.chainid, config.broadcastPath), entityManagerInitData));
+        
+        bytes memory entityTokenInitData = abi.encodeCall(EntityToken.initialize, (config.admin));
         entityTokenProxyAddress =
-            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("EntityToken", block.chainid), ""));
+            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("EntityToken", block.chainid, config.broadcastPath), entityTokenInitData));
+        
+        bytes memory contributionInitData = abi.encodeCall(Contribution.initialize, (address(registry), config.admin));
         contributionProxyAddress =
-            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("Contribution", block.chainid), ""));
-
-        Registry registry = Registry(DevOpsTools.get_most_recent_deployment("Registry", block.chainid));
-
-        OrganizationManager(payable(orgManagerProxyAddress)).initialize(config.admin);
-        EntityManager(payable(entityManagerProxyAddress)).initialize(address(registry), config.admin);
-        EntityToken(payable(entityTokenProxyAddress)).initialize(config.admin);
-        Contribution(payable(contributionProxyAddress)).initialize(address(registry), config.admin);
+            address(new ERC1967Proxy(DevOpsTools.get_most_recent_deployment("Contribution", block.chainid, config.broadcastPath), contributionInitData));
 
         vm.stopBroadcast();
 
